@@ -1,0 +1,80 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: backend-db-1
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: desafio_mailer
+    ports:
+      - "5434:5432"
+    volumes:
+      - backend_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U root" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: mailhog-1
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-api-1
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - DB_URL=postgresql+asyncpg://root:root@db:5432/desafio_mailer
+      - MAIL_PASSWORD=dummy
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: backend-worker-1
+    command: python worker.py
+    environment:
+      - DB_URL=postgresql+asyncpg://root:root@db:5432/desafio_mailer
+      - MAIL_SERVER=mailhog
+      - MAIL_PORT=1025
+      - SUPPRESS_SEND=0
+    depends_on:
+      api:
+        condition: service_started
+      mailhog:
+        condition: service_started
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: frontend-app-1
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    depends_on:
+      api:
+        condition: service_started
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+
+volumes:
+  backend_postgres_data:

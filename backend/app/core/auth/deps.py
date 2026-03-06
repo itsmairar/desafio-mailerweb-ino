@@ -1,0 +1,52 @@
+from typing import AsyncGenerator, Annotated
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials
+import jwt
+from jwt import PyJWTError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.auth.auth import oauth2_schema
+from app.core.configs import settings
+from app.core.database import Session
+
+
+async def get_session() -> AsyncGenerator[AsyncSession, None]:
+    session: AsyncSession = Session()
+    try:
+        yield session
+    finally:
+        await session.close()
+
+
+SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+
+async def validate_form_token(
+    token: HTTPAuthorizationCredentials = Depends(oauth2_schema),
+) -> str:
+    if token is None or not token.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Access token not provided",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    credential_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired access token",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    try:
+        payload = jwt.decode(
+            token.credentials,
+            settings.JWT_SECRET,
+            algorithms=[settings.ALGORITHM],
+            options={"verify_aud": False},
+        )
+        if "form_access" not in payload.get("scopes", []):
+            raise credential_exception
+    except PyJWTError:
+        raise credential_exception
+
+    return payload["sub"]
